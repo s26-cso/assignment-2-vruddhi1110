@@ -1,0 +1,16 @@
+BUuXfsUOj3xJcdX3SL2FH9vfaJb/sQEkwbXK1vhXimM=
+
+# Q-3 Part A - Password Discovery
+# 
+# Approach:
+# I used the `strings` utility to extract human-readable text from the provided ELF binary.
+# Since the binary prints out "You have passed!" upon success and "Sorry, try again." upon 
+# failure, I searched the strings output for strings located near the success message.
+# 
+# The string `BUuXfsUOj3xJcdX3SL2FH9vfaJb/sQEkwbXK1vhXimM=` was found exactly adjacent 
+# to the success and failure messages in the section `.rodata`. This string serves as the 
+# hardcoded password in the target executable.
+# 
+# By providing this extracted string as the first token in payload.txt, the executable's 
+# `scanf("%63s")` call reads it perfectly, successfully unlocking the executable and 
+# outputting 'You have passed!'.

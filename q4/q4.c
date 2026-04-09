@@ -14,7 +14,7 @@ int main() {
         }
 
         char libname[20] ; 
-        snprintf(libname , sizeof(libname) , "lib%s.so", op) ; // Construct the library name based on the operation
+        snprintf(libname , sizeof(libname) , "./lib%s.so", op) ; // Construct the library name based on the operation
         void *handle = dlopen(libname , RTLD_LAZY) ; // Load the shared
         if(!handle) {
             fprintf(stderr , "Error: Could not open %s\n", libname) ;

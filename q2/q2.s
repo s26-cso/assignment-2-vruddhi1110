@@ -1,141 +1,183 @@
-.intel_syntax noprefix #Use Intel-style assembly syntax instead of the default (AT&T syntax)
+.intel_syntax noprefix
 .global main 
 .extern printf
-.extern atoi #atoi converts a null-terminated ASCII string into its equivalent integer representation.
+.extern atoi
 
+.section .rodata 
+fmt: .asciz "%d "
+newline: .asciz "\n"
 
-.section .data 
-fmt : .asciz "%d "
-newline : .asciz "\n"
-
-.section .txt
+.section .text
 
 main:
-push rbp 
-mov rbp , rsp 
+    push rbp 
+    mov rbp, rsp 
 
-mov r12 , rdi #r12 = argc
-mov r13 , rsi  #r13 = argv
+    # Save command-line arguments (argc, argv) in callee-saved registers
+    push r12
+    push r13
+    push r14
+    push r15
+    push rbx
 
-#n = argc - 1
+    mov r12, rdi      # r12 = argc
+    mov r13, rsi      # r13 = argv
+
+    # n = argc - 1
     mov r14, r12
-    dec r14  #r14 = n
+    dec r14           # r14 = n
 
-cmp r14 , 0
-jle end_program
+    cmp r14, 0
+    jle end_program
 
-#Allocate memory on stack
-# arr[n], result[n], stack[n]
-#each int = 4 bytes ,  total = 12*n
+    # Allocate memory on stack
+    # arr[n], result[n], stack[n]
+    # each int = 4 bytes, total = 12 * n
+    mov rax, r14 
+    imul rax, 12      # Total size in bytes (12 * n)
+    # Align stack to 16 bytes
+    add rax, 15
+    and rax, -16
+    sub rsp, rax 
 
-mov rax , r14 
-imul rax , r12  #performs signed multiplication, preserving the sign of the product
-sub rsp , rax 
+    mov r15, rsp      # Base pointer for our arrays
 
-mov r15 , rsp #base pointer
+    mov rbx, r15      # arr base
 
-mov rbx , r15 #arr base
-#result base = r15 + 4*n
+    mov rcx, r14 
+    imul rcx, 4
+    lea r8, [r15 + rcx]       # result base = r15 + 4*n
+    lea r9, [r8 + rcx]        # stack base = result_base + 4*n (which is r15 + 8*n)
 
-mov rcx , r14 
-imul rcx , 4
-lea  r8 , [r15 + rcx] # Load Effective Address , Unlike MOV, which accesses the data stored at a memory address, LEA only calculates the address itself and never reads from or writes to that memory location.
-
-lea r9 , [r8+rcx] #stack base = r15 + 8*n
-mov r10 , 0  #i = 0 
+    xor r10, r10      # i = 0 
 
 fill_arr:
-cmp , r10 , r14 
-jge fill_done  #Jump if Greater or Equal , basically checking whether arr[s[top]] <= arr[i] 
-mov rdi, [r13 + 8*(r10+1)]  #we access argv[i+1]
-call atoi #atoi converts string to int , bcz we need int since we are comparing 
+    cmp r10, r14 
+    jge fill_done 
 
-mov [rbx + 4*r10 ] , eax 
-inc r10 #i++
-jmp fill_arr
+    # We access argv[i+1] => r13 + 8*(r10+1)
+    # Since atoi uses C ABI, it can clobber rcx, r8, r9, r10, r11.
+    # So we MUST save r8, r9, r10 across the atoi/printf calls!
+    push r10
+    push r8
+    push r9
+    push r10          # Push again for 16-byte stack alignment
+    
+    mov rdi, QWORD PTR [r13 + 8*r10 + 8]
+    call atoi
+    
+    pop r10
+    pop r9
+    pop r8
+    pop r10
 
-mov r10 , 0 
+    mov DWORD PTR [rbx + 4*r10], eax 
+    inc r10
+    jmp fill_arr
+
+fill_done:
+    xor r10, r10      # i = 0
 
 init_result:
-cmp r10,r14 
-jge init_done
+    cmp r10, r14 
+    jge init_done
 
-mov dword ptr [r8 + 4*r10] , -1 #intilizing result arr with -1
-inc r10 
-jmp init_result 
+    mov DWORD PTR [r8 + 4*r10], -1  # result[i] = -1
+    inc r10 
+    jmp init_result 
 
 init_done: 
-mov r11 , -1 # stack top = -1 
-mov r10 , r14 
-dec r10 
+    mov r11, -1       # r11 = stack top index (-1 means empty)
+    mov r10, r14 
+    dec r10           # r10 = n - 1 (loop from right to left)
 
 main_loop:
-cmp r10 , -1 #Stack empty case for right most ele of arr 
-je process_done
+    cmp r10, -1 
+    je process_done
 
 while_loop:
-cmp r11 , -1
-je while_end
+    cmp r11, -1       # while stack is not empty
+    je while_end
 
-#stack top 
-mov eax , [r9 + 4*r11] 
-mov edx , eax 
+    # stack[top]
+    movsxd rdx, DWORD PTR [r9 + 4*r11] 
+    
+    # arr[stack[top]]
+    mov eax, DWORD PTR [rbx + 4*rdx] 
+    
+    # arr[i]
+    mov ecx, DWORD PTR [rbx + 4*r10] 
 
-#arr[stack[top]]
-mov eax , [rbx+4*rdx] 
-#arr[i]
-mov ecx , [rbx+4*r10] 
+    cmp eax, ecx 
+    jg while_end      # if arr[stack[top]] > arr[i], break while
 
-cmp eax , ecx 
-jg while_end 
-
-dec r11 
-jmp while_loop
+    dec r11           # stack.pop()
+    jmp while_loop
 
 while_end:
-cmp r11 , -1
-je no_greater 
+    cmp r11, -1
+    je no_greater 
 
-#result[i] = stack[top]
-mov eax , [r9+4*r11] 
-mov [r8 + 4*r10], eax
-jmp after_assign 
+    # result[i] = stack[top]
+    mov eax, DWORD PTR [r9 + 4*r11] 
+    mov DWORD PTR [r8 + 4*r10], eax
+    jmp after_assign 
 
 no_greater:
-mov dword ptr [r8 + 4*r10], -1 #Double Word refers to a 32-bit
+    mov DWORD PTR [r8 + 4*r10], -1
 
 after_assign:
-#push i 
-inc r11 
-mov [r9 + 4*r11], r10d
-dec r10
-jmp main_loop
+    # stack.push(i)
+    inc r11 
+    mov DWORD PTR [r9 + 4*r11], r10d
+
+    dec r10
+    jmp main_loop
 
 process_done:
-mov r10 , 0 
-#print result 
+    xor r10, r10      # i = 0 
+
 print_loop:
-cmp r10,r14 
-jge print_done 
-mov rdi, offset fmt mov esi, [r8 + 4*r10]
-mov eax, 0
-call printf
-inc r10
-jmp print_loop
+    cmp r10, r14 
+    jge print_done 
+
+    push r10
+    push r8
+    push r9
+    push r10          # Padding for stack alignment
+
+    # printf("%d ", result[i])
+    lea rdi, [fmt]
+    mov esi, DWORD PTR [r8 + 4*r10]
+    xor eax, eax
+    call printf
+
+    pop r10
+    pop r9
+    pop r8
+    pop r10
+
+    inc r10
+    jmp print_loop
 
 print_done:
-    mov rdi, offset newline
-   mov  eax, 0
+    lea rdi, [newline]
+    xor eax, eax
     call printf
 
 end_program:
+    # Stack restore
+    lea rsp, [rbp - 40]
+    
+    # Restore callee-saved registers
+    pop rbx
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+
     mov rsp, rbp
     pop rbp
+    # return 0
+    xor eax, eax
     ret
-
-
-
-
-
-
-

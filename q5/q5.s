@@ -1,29 +1,28 @@
-section.data
-       filename db "input.txt"  , 0 
-       yes_msg db "Yes" ,10
-       yes_len equ $ - yes_msg 
-       no_msg db "No", 10
-       no_len equ $ - no_msg
+.intel_syntax noprefix
+.global _start
 
-section.bss
-c1 resb 1
-c2 resb 1
+.section .data
+filename: .asciz "input.txt"
+yes_msg: .asciz "Yes\n"
+yes_len = . - yes_msg
+no_msg: .asciz "No\n"
+no_len = . - no_msg
 
-section.txt
-global_start
+.section .bss
+c1: .space 1
+c2: .space 1
 
+.section .text
 _start:
-#open("input.txt", O_RDONLY)
-mov rax , 2
-mov rdi, filename
+    # open("input.txt", O_RDONLY)
+    mov rax, 2         # sys_open
+    lea rdi, [filename]
     mov rsi, 0         # O_RDONLY
     mov rdx, 0
     syscall
-    mov r12, rax
+    mov r12, rax       # fd
 
-    fd
-
-   # lseek(fd, 0, SEEK_END)
+    # lseek(fd, 0, SEEK_END)
     mov rax, 8         # sys_lseek
     mov rdi, r12
     mov rsi, 0
@@ -31,6 +30,30 @@ mov rdi, filename
     syscall
     mov r13, rax       # size
 
+    # Strip trailing newline if it exists
+    cmp r13, 0
+    jle is_palindrome
+
+    # check last character
+    mov rax, 8         # lseek
+    mov rdi, r12
+    mov rsi, r13
+    dec rsi
+    mov rdx, 0         # SEEK_SET
+    syscall
+
+    mov rax, 0         # read
+    mov rdi, r12
+    lea rsi, [c1]
+    mov rdx, 1
+    syscall
+
+    mov al, BYTE PTR [c1]
+    cmp al, 10         # newline
+    jne set_indices
+    dec r13            # ignore newline in size
+
+set_indices:
     mov r14, 0         # left = 0
     mov r15, r13
     dec r15            # right = size - 1
@@ -39,7 +62,7 @@ loop_start:
     cmp r14, r15
     jge is_palindrome
 
-   # --- read left char ---
+    # --- read left char ---
     mov rax, 8         # lseek
     mov rdi, r12
     mov rsi, r14
@@ -48,36 +71,26 @@ loop_start:
 
     mov rax, 0         # read
     mov rdi, r12
-    mov rsi, c1
+    lea rsi, [c1]
     mov rdx, 1
     syscall
 
-   # --- read right char ---
-    mov rax, 8
+    # --- read right char ---
+    mov rax, 8         # lseek
     mov rdi, r12
     mov rsi, r15
-    mov rdx, 0
+    mov rdx, 0         # SEEK_SET
     syscall
 
-    mov rax, 0
+    mov rax, 0         # read
     mov rdi, r12
-    mov rsi, c2
+    lea rsi, [c2]
     mov rdx, 1
     syscall
 
-   # compare
-    mov al, [c1]
-    mov bl, [c2]not_palindrome:
-    mov rax, 1
-    mov rdi, 1
-    mov rsi, no_msg
-    mov rdx, no_len
-    syscall
-
-exit:
-    mov rax, 60         ; exit
-    xor rdi, rdi
-    syscall
+    # compare
+    mov al, BYTE PTR [c1]
+    mov bl, BYTE PTR [c2]
     cmp al, bl
     jne not_palindrome
 
@@ -85,10 +98,27 @@ exit:
     dec r15
     jmp loop_start
 
+not_palindrome:
+    mov rax, 1         # write
+    mov rdi, 1
+    lea rsi, [no_msg]
+    mov rdx, no_len
+    syscall
+    jmp exit
+
 is_palindrome:
     mov rax, 1         # write
     mov rdi, 1         # stdout
-    mov rsi, yes_msg
+    lea rsi, [yes_msg]
     mov rdx, yes_len
     syscall
-    jmp exit
+
+exit:
+    # close fd
+    mov rax, 3         # sys_close
+    mov rdi, r12
+    syscall
+
+    mov rax, 60        # exit
+    xor rdi, rdi
+    syscall

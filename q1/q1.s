@@ -1,178 +1,126 @@
-. intel_syntax noprefix  #Use Intel-style assembly syntax instead of the default (AT&T syntax)
-. global make_node
+.intel_syntax noprefix
+.global make_node
 .global insert
 .global get
 .global getAtMost
 
+.extern malloc
 
-.extern malloc # we will get malloc lib when we will compile with gcc , not included in this file
+# struct Node {
+#   int val;            // offset 0 (4 bytes)
+#   struct Node* left;  // offset 8 (8 bytes)
+#   struct Node* right; // offset 16 (8 bytes)
+#   Total size: 24 bytes
+# }
 
-    # struct Node   {
-    #   int val (offset 0) 
-    #   Node*left (offset 8)
-    #   Node*right (offset 16)
-    #  total size = 24 bytes 
-    #   }
+# struct Node* make_node(int val)
+# input: edi = val
+# output: rax = pointer to new node
+make_node:
+    push rdi             # save val + align stack to 16 bytes (since call pushed 8 bytes)
+    mov rdi, 24          # size of struct Node
+    call malloc          # allocate memory
+    pop rdi              # restore val
+    
+    mov DWORD PTR [rax], edi       # node->val = val
+    mov QWORD PTR [rax+8], 0       # node->left = NULL
+    mov QWORD PTR [rax+16], 0      # node->right = NULL
+    ret
 
-    # make_node(int val) 
-    # input : rdi = val
-    # output : rax = pointer to new node
-
-
-make_node :
-push rdi #saving value in the stack bcz mallloc will overwrite register
-
-mov rdi , 24 #size of struct node
-call mallloc # calling malloc(24) , rax = allocated memory
-
-pop rdi #restore val
-
-#Store val (int = 4 bytes)
-mov [rax] , edi #node->val = val , we use edi insted of rdi bcz , edi =  lower 32 bits of rdi Used when dealing with int (4 bytes)
-                                    # Prevents memory corruption
-
-#node->left = null
-mov qword ptr [rx+8] , 0  # quad word = 8 bytes  , so  full meaning is "Memory at address (rax + 8), treat it as 8 bytes"in c Compiler already knows:
-                            #left is a pointer =  8 bytes , but in assembly we need to specify . 
-
-#node->right = null
-mov qword ptr [rx+16] , 0
-
-ret #Return pointer in rax
-
-    #insert(struct node*root , int val) 
-    # input: rdi = root , rsi = val
-    # optput : rax = root
+# struct Node* insert(struct Node* root, int val)
+# input: rdi = root, esi = val
+# output: rax = root
 insert:
- #case:1  if root is null create new node
-    #equvivalent c code
-    #if (root == NULL)
-    #  return make_node(val);
-        cmp rdi , 0
-        je insert_make_new # je = jump if equal
-        #If (rdi == 0), jump to insert_make_new
+    cmp rdi, 0           # if root is NULL
+    je insert_make_new
 
-mov eax , [rdi] #Load root->val , eax = 10
-cmp rsi , rax #Compare val with root->val ,  7 - 10
+    mov eax, DWORD PTR [rdi]  # load root->val
+    cmp esi, eax              # compare val with root->val
+    jl insert_left            # if val < root->val
+    jg insert_right           # if val > root->val
 
-jl insert_left #if val < root->val
-jr insert_right #if val > root->val
+    # If equal, just return root
+    mov rax, rdi
+    ret
 
- #case-2:- Left side 
- insert_left:
+insert_left:
+    push rdi                  # save root
+    mov rdi, QWORD PTR [rdi+8] # rdi = root->left
+    # esi already has val
+    call insert               # insert(root->left, val)
+    pop rdi                   # restore root
+    mov QWORD PTR [rdi+8], rax # root->left = returned node
+    mov rax, rdi              # return root
+    ret
 
- push rdi #saving root bcz we need it during recursion , back tracking
- mov rdi , [rdi+8] #Node*temp = root->left , rsi alraedy has val
- call insert #it will return rax which is a   new left child 
- pop rdi #restoring orginal root
+insert_right:
+    push rdi                  # save root
+    mov rdi, QWORD PTR [rdi+16] # rdi = root->right
+    # esi already has val
+    call insert               # insert(root->right, val)
+    pop rdi                   # restore root
+    mov QWORD PTR [rdi+16], rax # root->right = returned node
+    mov rax, rdi              # return root
+    ret
 
- mov [rdi+8] , rax #root->left = returned node
- mov rax,rdi  
-
- ret
- #right case :
- insert_right :
- push rdi #saving root bcz we need it during recursion , back tracking
- mov rdi ,[rdi+16] #Node*temp = root->right , rsi alraedy has val
- call insert #it will return rax which is a   new right child 
-pop rdi #restoring orginal root
-
-mov [rdi+16] , rax ##root->right = returned node
-mov rax , rdi  #return pointer = root , basically return the root of the bst 
-
-#create new node
 insert_make_new:
-#calling make_node(val)
-mov rdi , rsi #this function needs only one argument val. Its input must be in rdi so Pass val as argument to make_node.
-call make_node #Calls the function make_node
-ret # returns  new node
+    mov rdi, rsi              # pass val to make_node
+    # We must align the stack before calling make_node, just in case!
+    # However, replacing 'call make_node' with a standard jump works
+    # identically and saves stack manipulation.
+    jmp make_node             # jump to make_node directly
 
-#get(struct*Node root , int val):
-#input : rdi = root , rsi = val 
-#output : rax = pointer to node or null if that node does  not exits 
-
+# struct Node* get(struct Node* root, int val)
+# input: rdi = root, esi = val
+# output: rax = pointer to node or NULL
 get:
-#If root == NULL , return null
-cmp rdi , 0 
-je get_not_found
+    cmp rdi, 0                # if root == NULL
+    je get_not_found
 
-#Loading root->val 
+    mov eax, DWORD PTR [rdi]  # load root->val
+    cmp esi, eax
+    je get_found              # if val == root->val
+    jl get_left               # if val < root->val
+    jg get_right              # if val > root->val
 
-mov eax , [rdi] 
-
-cmp rsi , rax
-je get_found  
-#if smaller go to left side
-jl get_left
-
-#if bigger go to left side
-jg get_right 
-
-get_left :
-mov rdi , [rdi + 8]
-call get
-ret
+get_left:
+    mov rdi, QWORD PTR [rdi+8] # root = root->left
+    jmp get
 
 get_right:
-mov rdi , [rdi+16] 
-call get
-ret
+    mov rdi, QWORD PTR [rdi+16] # root = root->right
+    jmp get
 
 get_found:
-mov rax , rdi
-ret
+    mov rax, rdi
+    ret
 
 get_not_found:
-mov rax , 0 
-ret
+    mov rax, 0
+    ret
 
-#Get At Most(int val , struct*Node root)
-input: rdi = val , rsi = root
-output: rax = result or -1
-
-get_at_most:
-#rdi = val , rsi = root
-mov rax , -1 #default ans -1
-
+# int getAtMost(int val, struct Node* root)
+# input: edi = val, rsi = root
+# output: eax = result or -1
+getAtMost:
+    mov eax, -1               # default answer = -1
 get_at_most_loop:
-#while(root != Null) 
-cmp rsi , 0 
-je get_at_most_done
+    cmp rsi, 0                # while(root != NULL)
+    je get_at_most_done
 
-#Loading root->val
-mov edx , [rsi]
+    mov edx, DWORD PTR [rsi]  # load root->val
+    cmp edi, edx              # cmp val, root->val
+    jge update_answer         # if val >= root->val, go right
 
-#if root->val = val 
-cmp edx , edi 
-jle update_answere
+    # go left
+    mov rsi, QWORD PTR [rsi+8]
+    jmp get_at_most_loop
 
-#otherwise go left 
-mov rsi , [rsi+8]
-jmp get_at_most_loop
-
-update_answere:
-#update_answere = root->val
-mov eax , edx
-
-
-#go right to fine larger vals
-mov rsi , [rsi+16]
-jmp get_at_most_loop
+update_answer:
+    mov eax, edx              # update answer = root->val
+    # go right to find larger valid values
+    mov rsi, QWORD PTR [rsi+16]
+    jmp get_at_most_loop
 
 get_at_most_done:
-ret
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    ret
