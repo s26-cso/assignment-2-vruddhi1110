@@ -1,6 +1,3 @@
-.intel_syntax noprefix
-.global _start
-
 .section .data
 filename: .asciz "input.txt"
 yes_msg: .asciz "Yes\n"
@@ -13,112 +10,117 @@ c1: .space 1
 c2: .space 1
 
 .section .text
+.globl _start
 _start:
     # open("input.txt", O_RDONLY)
-    mov rax, 2         # sys_open
-    lea rdi, [filename]
-    mov rsi, 0         # O_RDONLY
-    mov rdx, 0
-    syscall
-    mov r12, rax       # fd
+    # Use openat(dirfd=AT_FDCWD, pathname, flags=0, mode=0)
+    li a0, -100        # AT_FDCWD
+    la a1, filename
+    li a2, 0           # O_RDONLY
+    li a3, 0
+    li a7, 56          # sys_openat
+    ecall
+    mv s0, a0          # fd
 
     # lseek(fd, 0, SEEK_END)
-    mov rax, 8         # sys_lseek
-    mov rdi, r12
-    mov rsi, 0
-    mov rdx, 2         # SEEK_END
-    syscall
-    mov r13, rax       # size
+    mv a0, s0
+    li a1, 0
+    li a2, 2           # SEEK_END
+    li a7, 62          # sys_lseek
+    ecall
+    mv s1, a0          # size
 
     # Strip trailing newline if it exists
-    cmp r13, 0
-    jle is_palindrome
+    # if size <= 0 jump
+    blez s1, is_palindrome
 
     # check last character
-    mov rax, 8         # lseek
-    mov rdi, r12
-    mov rsi, r13
-    dec rsi
-    mov rdx, 0         # SEEK_SET
-    syscall
+    addi t0, s1, -1    # offset = size - 1
+    mv a0, s0
+    mv a1, t0
+    li a2, 0           # SEEK_SET
+    li a7, 62          # lseek
+    ecall
 
-    mov rax, 0         # read
-    mov rdi, r12
-    lea rsi, [c1]
-    mov rdx, 1
-    syscall
+    li a0, 63          # read
+    mv a0, s0
+    la a1, c1
+    li a2, 1
+    li a7, 63          # sys_read
+    ecall
 
-    mov al, BYTE PTR [c1]
-    cmp al, 10         # newline
-    jne set_indices
-    dec r13            # ignore newline in size
+    la t5, c1
+    lb t1, 0(t5)
+    li t2, 10          # newline
+    bne t1, t2, set_indices
+    addi s1, s1, -1    # ignore newline in size
 
 set_indices:
-    mov r14, 0         # left = 0
-    mov r15, r13
-    dec r15            # right = size - 1
+    li s2, 0           # left = 0
+    mv s3, s1
+    addi s3, s3, -1    # right = size - 1
 
 loop_start:
-    cmp r14, r15
-    jge is_palindrome
+    bge s2, s3, is_palindrome
 
     # --- read left char ---
-    mov rax, 8         # lseek
-    mov rdi, r12
-    mov rsi, r14
-    mov rdx, 0         # SEEK_SET
-    syscall
+    mv a0, s0
+    mv a1, s2
+    li a2, 0           # SEEK_SET
+    li a7, 62          # lseek
+    ecall
 
-    mov rax, 0         # read
-    mov rdi, r12
-    lea rsi, [c1]
-    mov rdx, 1
-    syscall
+    mv a0, s0
+    la a1, c1
+    li a2, 1
+    li a7, 63          # read
+    ecall
 
     # --- read right char ---
-    mov rax, 8         # lseek
-    mov rdi, r12
-    mov rsi, r15
-    mov rdx, 0         # SEEK_SET
-    syscall
+    mv a0, s0
+    mv a1, s3
+    li a2, 0           # SEEK_SET
+    li a7, 62          # lseek
+    ecall
 
-    mov rax, 0         # read
-    mov rdi, r12
-    lea rsi, [c2]
-    mov rdx, 1
-    syscall
+    mv a0, s0
+    la a1, c2
+    li a2, 1
+    li a7, 63          # read
+    ecall
 
     # compare
-    mov al, BYTE PTR [c1]
-    mov bl, BYTE PTR [c2]
-    cmp al, bl
-    jne not_palindrome
+    la t5, c1
+    lb t3, 0(t5)
+    la t6, c2
+    lb t4, 0(t6)
+    bne t3, t4, not_palindrome
 
-    inc r14
-    dec r15
-    jmp loop_start
+    addi s2, s2, 1
+    addi s3, s3, -1
+    j loop_start
 
 not_palindrome:
-    mov rax, 1         # write
-    mov rdi, 1
-    lea rsi, [no_msg]
-    mov rdx, no_len
-    syscall
-    jmp exit
+    li a0, 1
+    la a1, no_msg
+    li a2, no_len
+    li a7, 64          # write
+    ecall
+    j exit
 
 is_palindrome:
-    mov rax, 1         # write
-    mov rdi, 1         # stdout
-    lea rsi, [yes_msg]
-    mov rdx, yes_len
-    syscall
+    li a0, 1           # stdout
+    la a1, yes_msg
+    li a2, yes_len
+    li a7, 64          # write
+    ecall
 
 exit:
     # close fd
-    mov rax, 3         # sys_close
-    mov rdi, r12
-    syscall
+    mv a0, s0
+    li a7, 57          # sys_close
+    ecall
 
-    mov rax, 60        # exit
-    xor rdi, rdi
-    syscall
+    li a0, 0
+    li a7, 93          # exit
+    ecall
