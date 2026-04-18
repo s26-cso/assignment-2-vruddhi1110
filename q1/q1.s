@@ -1,8 +1,8 @@
-.intel_syntax noprefix
-.global make_node
-.global insert
-.global get
-.global getAtMost
+.section .text
+.globl make_node
+.globl insert
+.globl get
+.globl getAtMost
 
 .extern malloc
 
@@ -14,113 +14,141 @@
 # }
 
 # struct Node* make_node(int val)
-# input: edi = val
-# output: rax = pointer to new node
+# input: a0 = val
+# output: a0 = pointer to new node
 make_node:
-    push rdi             # save val + align stack to 16 bytes (since call pushed 8 bytes)
-    mov rdi, 24          # size of struct Node
-    call malloc          # allocate memory
-    pop rdi              # restore val
-    
-    mov DWORD PTR [rax], edi       # node->val = val
-    mov QWORD PTR [rax+8], 0       # node->left = NULL
-    mov QWORD PTR [rax+16], 0      # node->right = NULL
-    ret
+    # Prologue: allocate stack frame and save ra, s0
+    addi sp, sp, -32
+    sd ra, 24(sp)
+    sd s0, 16(sp)
+    mv s0, sp
+
+    mv t0, a0          # t0 = val (save across malloc)
+    li a0, 24          # size of struct Node
+    call malloc        # malloc(size) -> returns ptr in a0
+
+    # Initialize node fields
+    # store 32-bit val at offset 0
+    sw t0, 0(a0)
+    # set left and right pointers to NULL
+    sd x0, 8(a0)
+    sd x0, 16(a0)
+
+    # Epilogue: restore and return
+    ld ra, 24(sp)
+    ld s0, 16(sp)
+    addi sp, sp, 32
+    jr ra
 
 # struct Node* insert(struct Node* root, int val)
-# input: rdi = root, esi = val
-# output: rax = root
+# input: a0 = root, a1 = val
+# output: a0 = root (possibly newly created node pointer)
 insert:
-    cmp rdi, 0           # if root is NULL
-    je insert_make_new
+    # Prologue: save ra and callee-saved registers s0,s1
+    addi sp, sp, -48
+    sd ra, 40(sp)
+    sd s0, 32(sp)
+    sd s1, 24(sp)
+    mv s0, sp
 
-    mov eax, DWORD PTR [rdi]  # load root->val
-    cmp esi, eax              # compare val with root->val
-    jl insert_left            # if val < root->val
-    jg insert_right           # if val > root->val
+    mv s1, a0          # s1 = root (save across recursive calls)
 
-    # If equal, just return root
-    mov rax, rdi
-    ret
+    beq a0, x0, insert_make_new  # if root == NULL
+
+    lw t0, 0(a0)       # t0 = root->val
+    beq a1, t0, insert_return_root
+    blt a1, t0, insert_left
+
+    # insert_right:
+    # load root->right into a0 and call insert
+    ld a0, 16(s1)      # a0 = root->right
+    # a1 already has val
+    call insert
+    # a0 = returned node pointer (new right child)
+    sd a0, 16(s1)      # root->right = returned node
+    mv a0, s1          # return root
+    j insert_epilogue
 
 insert_left:
-    push rdi                  # save root
-    mov rdi, QWORD PTR [rdi+8] # rdi = root->left
-    # esi already has val
-    call insert               # insert(root->left, val)
-    pop rdi                   # restore root
-    mov QWORD PTR [rdi+8], rax # root->left = returned node
-    mov rax, rdi              # return root
-    ret
+    # load root->left into a0 and call insert
+    ld a0, 8(s1)       # a0 = root->left
+    # a1 already has val
+    call insert
+    # a0 = returned node pointer (new left child)
+    sd a0, 8(s1)       # root->left = returned node
+    mv a0, s1
+    j insert_epilogue
 
-insert_right:
-    push rdi                  # save root
-    mov rdi, QWORD PTR [rdi+16] # rdi = root->right
-    # esi already has val
-    call insert               # insert(root->right, val)
-    pop rdi                   # restore root
-    mov QWORD PTR [rdi+16], rax # root->right = returned node
-    mov rax, rdi              # return root
-    ret
+insert_return_root:
+    mv a0, s1
+    j insert_epilogue
 
 insert_make_new:
-    mov rdi, rsi              # pass val to make_node
-    # We must align the stack before calling make_node, just in case!
-    # However, replacing 'call make_node' with a standard jump works
-    # identically and saves stack manipulation.
-    jmp make_node             # jump to make_node directly
+    # create a new node with value = a1
+    mv a0, a1          # move val into a0 for make_node
+    call make_node     # returns new node ptr in a0
+    j insert_epilogue  # return from function (a0 already set)
+
+insert_epilogue:
+    # Epilogue: restore registers and return
+    ld ra, 40(sp)
+    ld s0, 32(sp)
+    ld s1, 24(sp)
+    addi sp, sp, 48
+    jr ra
 
 # struct Node* get(struct Node* root, int val)
-# input: rdi = root, esi = val
-# output: rax = pointer to node or NULL
+# input: a0 = root, a1 = val
+# output: a0 = pointer to node or NULL
 get:
-    cmp rdi, 0                # if root == NULL
-    je get_not_found
-
-    mov eax, DWORD PTR [rdi]  # load root->val
-    cmp esi, eax
-    je get_found              # if val == root->val
-    jl get_left               # if val < root->val
-    jg get_right              # if val > root->val
+    # Iterative implementation
+get_loop:
+    beq a0, x0, get_not_found
+    lw t0, 0(a0)       # t0 = root->val
+    beq a1, t0, get_found
+    blt a1, t0, get_left
+    # go right
+    ld a0, 16(a0)
+    j get_loop
 
 get_left:
-    mov rdi, QWORD PTR [rdi+8] # root = root->left
-    jmp get
-
-get_right:
-    mov rdi, QWORD PTR [rdi+16] # root = root->right
-    jmp get
+    ld a0, 8(a0)
+    j get_loop
 
 get_found:
-    mov rax, rdi
+    # a0 currently points to the found node
     ret
 
 get_not_found:
-    mov rax, 0
+    li a0, 0
     ret
 
-# int getAtMost(int val, struct Node* root)
-# input: edi = val, rsi = root
-# output: eax = result or -1
+
+# struct Node* getAtMost(struct Node* root, int val)
+# Return pointer to node with largest value <= val, or NULL
+# input: a0 = root, a1 = val
+# output: a0 = pointer to node or NULL
 getAtMost:
-    mov eax, -1               # default answer = -1
-get_at_most_loop:
-    cmp rsi, 0                # while(root != NULL)
-    je get_at_most_done
+    # ans stored in t0 (initialize to NULL)
+    li t0, 0
+getAtMost_loop:
+    beq a0, x0, getAtMost_done
+    lw t1, 0(a0)       # t1 = node->val
+    blt a1, t1, getAtMost_go_left  # if val < node->val -> go left
+    # node->val <= val -> update ans, go right
+    mv t0, a0          # ans = current node
+    ld a0, 16(a0)      # go right
+    j getAtMost_loop
 
-    mov edx, DWORD PTR [rsi]  # load root->val
-    cmp edi, edx              # cmp val, root->val
-    jge update_answer         # if val >= root->val, go right
+getAtMost_go_left:
+    ld a0, 8(a0)       # go left
+    j getAtMost_loop
 
-    # go left
-    mov rsi, QWORD PTR [rsi+8]
-    jmp get_at_most_loop
+getAtMost_done:
+beq t0, x0, return_minus1   # if ans == NULL
+lw a0, 0(t0)                # load ans->val
+    ret
 
-update_answer:
-    mov eax, edx              # update answer = root->val
-    # go right to find larger valid values
-    mov rsi, QWORD PTR [rsi+16]
-    jmp get_at_most_loop
-
-get_at_most_done:
+return_minus1:
+    li a0, -1
     ret
